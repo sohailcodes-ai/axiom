@@ -1,0 +1,22 @@
+fn add(a: i64, b: i64) -> i64 {
+    a + b
+}
+
+fn main() {
+    let x = 10
+    let y = 20
+    let result = add(x, y)
+    print(result)
+
+    if x < y {
+        print("x is less than y")
+    } else {
+        print("x is not less than y")
+    }
+
+    let mut i = 0
+    while i < 5 {
+        print(i)
+        i = i + 1
+    }
+}

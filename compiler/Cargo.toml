@@ -1,0 +1,9 @@
+[package]
+name = "axiom-compiler"
+version = "0.1.0"
+edition = "2021"
+description = "AXIOM language compiler"
+
+[[bin]]
+name = "axiom"
+path = "src/main.rs"

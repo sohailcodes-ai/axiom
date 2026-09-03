@@ -1,0 +1,9 @@
+[package]
+name = "axiom-runtime"
+version = "0.1.0"
+edition = "2021"
+description = "AXIOM language runtime"
+
+[[bin]]
+name = "axiom-vm"
+path = "src/main.rs"
