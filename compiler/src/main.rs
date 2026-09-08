@@ -5,6 +5,7 @@ mod parser;
 mod errors;
 mod name_resolver;
 mod type_checker;
+mod domain_analysis;
 mod hir;
 mod hir_lower;
 mod vm;
@@ -18,6 +19,7 @@ use lexer::Lexer;
 use parser::Parser;
 use name_resolver::NameResolver;
 use type_checker::TypeChecker;
+use domain_analysis::DomainAnalyzer;
 use hir_lower::HIRLowerer;
 use codegen::CodeGenerator;
 use vm::VM;
@@ -56,9 +58,21 @@ fn compile_and_run(source: &str, filename: &str) -> i32 {
         }
         return 1;
     }
-    
+
+    // Domain analysis
+    let mut domain_analyzer = DomainAnalyzer::new(filename, checker.functions.clone());
+    domain_analyzer.analyze_program(&ast);
+    if !domain_analyzer.errors.is_empty() {
+        for error in &domain_analyzer.errors {
+            eprintln!("{}", error);
+        }
+        return 1;
+    }
+
     // Lower to HIR
     let mut lowerer = HIRLowerer::new(filename);
+    let domain_map = domain_analyzer.get_all_function_domains();
+    lowerer.set_domain_map(domain_map);
     let hir = lowerer.lower_program(&ast);
     if !lowerer.errors.is_empty() {
         for error in &lowerer.errors {

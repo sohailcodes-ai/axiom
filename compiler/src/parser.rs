@@ -34,9 +34,25 @@ impl Parser {
             Ok(TopLevel::Struct(self.parse_struct()?))
         } else if self.check(&TokenKind::Enum) {
             Ok(TopLevel::Enum(self.parse_enum()?))
+        } else if self.check(&TokenKind::Domain) {
+            Ok(TopLevel::Domain(self.parse_domain()?))
         } else {
             Err(self.error("expected top-level declaration"))
         }
+    }
+
+    fn parse_domain(&mut self) -> Result<DomainDef, CompileError> {
+        self.consume(&TokenKind::Domain, "expected 'domain'")?;
+        let name = self.consume_identifier("expected domain name")?;
+        self.consume(&TokenKind::LBrace, "expected '{'")?;
+
+        let mut items = Vec::new();
+        while !self.check(&TokenKind::RBrace) {
+            items.push(self.parse_top_level()?);
+        }
+
+        self.consume(&TokenKind::RBrace, "expected '}'")?;
+        Ok(DomainDef { name, items })
     }
 
     fn parse_function(&mut self) -> Result<FunctionDef, CompileError> {
@@ -621,27 +637,43 @@ impl Parser {
             TokenKind::Identifier(name) => {
                 let name = name.clone();
                 self.advance();
-                
+
                 if self.check(&TokenKind::LBrace) {
+                    let saved_pos = self.pos;
                     self.advance();
-                    let mut fields = Vec::new();
-                    
-                    while !self.check(&TokenKind::RBrace) {
-                        let field_name = self.consume_identifier("expected field name")?;
-                        self.consume(&TokenKind::Colon, "expected ':'")?;
-                        let value = self.parse_expr()?;
-                        fields.push((field_name, value));
-                        
-                        if !self.check(&TokenKind::Comma) {
-                            break;
-                        }
+
+                    let is_struct_literal = self.check(&TokenKind::RBrace)
+                        || (matches!(&self.peek().kind, TokenKind::Identifier(_)) && {
+                            let saved_pos2 = self.pos;
+                            self.advance();
+                            let has_colon = self.check(&TokenKind::Colon);
+                            self.pos = saved_pos2;
+                            has_colon
+                        });
+
+                    self.pos = saved_pos;
+
+                    if is_struct_literal {
                         self.advance();
+                        let mut fields = Vec::new();
+
+                        while !self.check(&TokenKind::RBrace) {
+                            let field_name = self.consume_identifier("expected field name")?;
+                            self.consume(&TokenKind::Colon, "expected ':'")?;
+                            let value = self.parse_expr()?;
+                            fields.push((field_name, value));
+
+                            if !self.check(&TokenKind::Comma) {
+                                break;
+                            }
+                            self.advance();
+                        }
+
+                        self.consume(&TokenKind::RBrace, "expected '}'")?;
+                        return Ok(Expr::StructLiteral { name, fields });
                     }
-                    
-                    self.consume(&TokenKind::RBrace, "expected '}'")?;
-                    return Ok(Expr::StructLiteral { name, fields });
                 }
-                
+
                 return Ok(Expr::Identifier(name));
             }
             _ => {}

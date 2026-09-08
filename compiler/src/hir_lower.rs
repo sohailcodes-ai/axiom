@@ -2,11 +2,14 @@ use std::collections::HashMap;
 use crate::ast::*;
 use crate::hir::*;
 use crate::errors::CompileError;
+use crate::domain_analysis::DomainKind;
 
 pub struct HIRLowerer {
     filename: String,
     scopes: Vec<HashMap<String, usize>>,
     local_count: usize,
+    function_domains: HashMap<String, DomainKind>,
+    current_domain: Option<DomainKind>,
     pub errors: Vec<CompileError>,
 }
 
@@ -16,26 +19,53 @@ impl HIRLowerer {
             filename: filename.to_string(),
             scopes: vec![HashMap::new()],
             local_count: 0,
+            function_domains: HashMap::new(),
+            current_domain: None,
             errors: Vec::new(),
         }
+    }
+
+    pub fn set_domain_map(&mut self, map: HashMap<String, DomainKind>) {
+        self.function_domains = map;
     }
 
     pub fn lower_program(&mut self, program: &Program) -> HIRProgram {
         let mut functions = Vec::new();
         
         for item in &program.items {
-            if let TopLevel::Function(func) = item {
-                functions.push(self.lower_function(func));
+            match item {
+                TopLevel::Function(func) => {
+                    functions.push(self.lower_function(func));
+                }
+                TopLevel::Domain(d) => {
+                    self.lower_domain(d, &mut functions);
+                }
+                _ => {}
             }
         }
         
         HIRProgram { functions }
     }
 
+    fn lower_domain(&mut self, domain: &crate::ast::DomainDef, functions: &mut Vec<HIRFunction>) {
+        for item in &domain.items {
+            match item {
+                TopLevel::Function(func) => {
+                    functions.push(self.lower_function(func));
+                }
+                TopLevel::Domain(d) => {
+                    self.lower_domain(d, functions);
+                }
+                _ => {}
+            }
+        }
+    }
+
     fn lower_function(&mut self, func: &FunctionDef) -> HIRFunction {
         self.push_scope();
         self.local_count = 0;
-        
+        self.current_domain = self.function_domains.get(&func.name).copied();
+
         let mut param_indices = Vec::new();
         for param in &func.params {
             let idx = self.define_local(&param.name);
@@ -46,7 +76,8 @@ impl HIRLowerer {
         
         let locals_count = self.local_count;
         self.pop_scope();
-        
+        self.current_domain = None;
+
         HIRFunction {
             name: func.name.clone(),
             params: param_indices.iter().map(|i| i.to_string()).collect(),
@@ -137,6 +168,18 @@ impl HIRLowerer {
                     if func_name == "print" {
                         if let Some(arg) = args.first() {
                             return HIRExpr::Print(Box::new(self.lower_expr(arg)));
+                        }
+                    }
+
+                    let callee_domain = self.function_domains.get(func_name).copied();
+                    if let (Some(from), Some(to)) = (self.current_domain, callee_domain) {
+                        if from != to {
+                            return HIRExpr::CrossDomainCall {
+                                func: func_name.clone(),
+                                args: lowered_args,
+                                from_domain: from.to_string(),
+                                to_domain: to.to_string(),
+                            };
                         }
                     }
                     

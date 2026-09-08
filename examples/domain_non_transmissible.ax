@@ -1,0 +1,19 @@
+struct Connection {
+    handle: Int
+}
+
+domain server {
+    fn get_connection() -> Connection {
+        return Connection { handle: 1 };
+    }
+}
+
+domain client {
+    fn use_connection() -> Connection {
+        return get_connection();
+    }
+}
+
+fn main() {
+    print("this should not compile");
+}

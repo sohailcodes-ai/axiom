@@ -1,0 +1,10 @@
+domain server {
+    fn get_count() -> Int {
+        return 42;
+    }
+}
+
+fn main() {
+    let n: Int = get_count();
+    print(n);
+}

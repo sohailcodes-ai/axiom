@@ -20,6 +20,12 @@ pub enum HIRExpr {
         func: String,
         args: Vec<HIRExpr>,
     },
+    CrossDomainCall {
+        func: String,
+        args: Vec<HIRExpr>,
+        from_domain: String,
+        to_domain: String,
+    },
     If {
         condition: Box<HIRExpr>,
         then_body: Vec<HIRStmt>,

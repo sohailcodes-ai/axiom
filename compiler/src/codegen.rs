@@ -30,7 +30,7 @@ impl CodeGenerator {
 
     fn generate_function(&self, func: &HIRFunction) -> VMFunction {
         let mut codegen = FunctionCodegen::new(func);
-        codegen.generate();
+        codegen.generate(&func.body);
         
         VMFunction {
             name: func.name.clone(),
@@ -62,8 +62,15 @@ impl FunctionCodegen {
         }
     }
 
-    fn generate(&mut self) {
-        // Generate instructions from HIR
+    fn generate(&mut self, body: &[HIRStmt]) {
+        for stmt in body {
+            self.generate_stmt(stmt);
+        }
+        let has_return = matches!(body.last(), Some(HIRStmt::Return(_)));
+        if !has_return {
+            self.emit(VMOpcode::LoadUnit, None);
+            self.emit(VMOpcode::Return, None);
+        }
     }
 
     fn emit(&mut self, opcode: VMOpcode, operand: Option<i64>) {
@@ -117,6 +124,14 @@ impl FunctionCodegen {
                 self.generate_unaryop(op);
             }
             HIRExpr::Call { func, args } => {
+                for arg in args {
+                    self.generate_expr(arg);
+                }
+                let idx = self.emit_const(VMConstant::String(func.clone())) as i64;
+                self.emit(VMOpcode::LoadConst, Some(idx));
+                self.emit(VMOpcode::CallFunc, None);
+            }
+            HIRExpr::CrossDomainCall { func, args, .. } => {
                 for arg in args {
                     self.generate_expr(arg);
                 }

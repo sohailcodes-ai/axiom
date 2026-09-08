@@ -150,10 +150,17 @@ pub struct EnumDef {
 }
 
 #[derive(Debug, Clone)]
+pub struct DomainDef {
+    pub name: String,
+    pub items: Vec<TopLevel>,
+}
+
+#[derive(Debug, Clone)]
 pub enum TopLevel {
     Function(FunctionDef),
     Struct(StructDef),
     Enum(EnumDef),
+    Domain(DomainDef),
 }
 
 #[derive(Debug, Clone)]

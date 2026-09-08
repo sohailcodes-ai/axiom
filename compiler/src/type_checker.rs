@@ -20,7 +20,7 @@ pub enum Type {
 pub struct TypeChecker {
     filename: String,
     scopes: Vec<HashMap<String, Type>>,
-    functions: HashMap<String, Type>,
+    pub functions: HashMap<String, Type>,
     pub errors: Vec<CompileError>,
 }
 
@@ -45,6 +45,28 @@ impl TypeChecker {
                 }
                 TopLevel::Enum(e) => {
                     self.check_enum(e);
+                }
+                TopLevel::Domain(d) => {
+                    self.check_domain(d);
+                }
+            }
+        }
+    }
+
+    fn check_domain(&mut self, domain: &crate::ast::DomainDef) {
+        for item in &domain.items {
+            match item {
+                TopLevel::Function(func) => {
+                    self.check_function(func);
+                }
+                TopLevel::Struct(s) => {
+                    self.check_struct(s);
+                }
+                TopLevel::Enum(e) => {
+                    self.check_enum(e);
+                }
+                TopLevel::Domain(d) => {
+                    self.check_domain(d);
                 }
             }
         }

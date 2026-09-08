@@ -29,6 +29,28 @@ impl NameResolver {
                 TopLevel::Enum(e) => {
                     self.resolve_enum(e);
                 }
+                TopLevel::Domain(d) => {
+                    self.resolve_domain(d);
+                }
+            }
+        }
+    }
+
+    fn resolve_domain(&mut self, domain: &crate::ast::DomainDef) {
+        for item in &domain.items {
+            match item {
+                TopLevel::Function(func) => {
+                    self.resolve_function(func);
+                }
+                TopLevel::Struct(s) => {
+                    self.resolve_struct(s);
+                }
+                TopLevel::Enum(e) => {
+                    self.resolve_enum(e);
+                }
+                TopLevel::Domain(d) => {
+                    self.resolve_domain(d);
+                }
             }
         }
     }

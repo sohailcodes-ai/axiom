@@ -1,0 +1,15 @@
+domain client {
+    fn notify_user(msg: String) {
+        print(msg);
+    }
+}
+
+domain server {
+    fn handle_request() {
+        notify_user("hello from server")
+    }
+}
+
+fn main() {
+    print("this should not compile");
+}

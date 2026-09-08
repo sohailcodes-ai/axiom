@@ -1,0 +1,21 @@
+struct User {
+    id: Int,
+    name: String
+}
+
+domain server {
+    fn get_user(id: Int) -> User {
+        return User { id: id, name: "Alice" };
+    }
+}
+
+domain client {
+    fn show_user(id: Int) -> User {
+        return get_user(id);
+    }
+}
+
+fn main() {
+    let u: User = show_user(1);
+    print("cross-domain call succeeded");
+}
