@@ -101,16 +101,16 @@ pub enum VMConstant {
     Unit,
 }
 
-struct StackFrame {
-    function_idx: usize,
-    locals: Vec<Value>,
-    ip: usize,
-    stack: Vec<Value>,
+pub struct StackFrame {
+    pub function_idx: usize,
+    pub locals: Vec<Value>,
+    pub ip: usize,
+    pub stack: Vec<Value>,
 }
 
 pub struct VM {
-    program: VMProgram,
-    frames: Vec<StackFrame>,
+    pub program: VMProgram,
+    pub frames: Vec<StackFrame>,
     cross_domain_stack: Vec<bool>,
     pub output: Vec<String>,
     pub errors: Vec<String>,
@@ -161,7 +161,7 @@ impl VM {
         0
     }
 
-    fn execute_instruction(&mut self) -> Result<(), String> {
+    pub fn execute_instruction(&mut self) -> Result<(), String> {
         let frame_idx = self.frames.len() - 1;
         let func_idx = self.frames[frame_idx].function_idx;
         
