@@ -137,7 +137,7 @@ impl FunctionCodegen {
                 }
                 let idx = self.emit_const(VMConstant::String(func.clone())) as i64;
                 self.emit(VMOpcode::LoadConst, Some(idx));
-                self.emit(VMOpcode::CallFunc, None);
+                self.emit(VMOpcode::CrossDomainCall, None);
             }
             HIRExpr::If { condition, then_body, else_body } => {
                 self.generate_expr(condition);
@@ -190,6 +190,29 @@ impl FunctionCodegen {
             HIRExpr::Return(expr) => {
                 self.generate_expr(expr);
                 self.emit(VMOpcode::Return, None);
+            }
+            HIRExpr::MakeStruct { fields } => {
+                // Push fields in reverse order so they pop correctly
+                for field in fields.iter().rev() {
+                    self.generate_expr(field);
+                }
+                self.emit(VMOpcode::MakeStruct, Some(fields.len() as i64));
+            }
+            HIRExpr::GetField { object, index } => {
+                self.generate_expr(object);
+                self.emit(VMOpcode::GetField, Some(*index as i64));
+            }
+            HIRExpr::MakeArray { elements } => {
+                // Push elements in reverse order so they pop correctly
+                for elem in elements.iter().rev() {
+                    self.generate_expr(elem);
+                }
+                self.emit(VMOpcode::MakeArray, Some(elements.len() as i64));
+            }
+            HIRExpr::ArrayGet { array, index } => {
+                self.generate_expr(array);
+                self.generate_expr(index);
+                self.emit(VMOpcode::ArrayGet, None);
             }
         }
     }

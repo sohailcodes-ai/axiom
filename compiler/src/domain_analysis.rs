@@ -23,6 +23,8 @@ pub struct DomainAnalyzer {
     function_domains: HashMap<String, DomainKind>,
     functions: HashMap<String, Type>,
     struct_fields: HashMap<String, Vec<(String, Type)>>,
+    type_domains: HashMap<String, DomainKind>,
+    has_domains: bool,
     pub errors: Vec<CompileError>,
 }
 
@@ -33,16 +35,91 @@ impl DomainAnalyzer {
             function_domains: HashMap::new(),
             functions,
             struct_fields: HashMap::new(),
+            type_domains: HashMap::new(),
+            has_domains: false,
             errors: Vec::new(),
         }
     }
 
     pub fn analyze_program(&mut self, program: &Program) {
+        self.collect_domains(program);
         self.collect_structs(program);
+        self.collect_type_domains(program);
         for item in &program.items {
             self.analyze_item(item);
         }
+        self.check_domain_enforcement(program);
         self.check_cross_domain_calls(program);
+    }
+
+    fn collect_domains(&mut self, program: &Program) {
+        for item in &program.items {
+            if let TopLevel::Domain(_) = item {
+                self.has_domains = true;
+                return;
+            }
+        }
+    }
+
+    fn collect_type_domains(&mut self, program: &Program) {
+        for item in &program.items {
+            self.collect_type_domains_item(item, None);
+        }
+    }
+
+    fn collect_type_domains_item(&mut self, item: &TopLevel, current_domain: Option<DomainKind>) {
+        match item {
+            TopLevel::Struct(s) => {
+                if let Some(domain) = current_domain {
+                    self.type_domains.insert(s.name.clone(), domain);
+                }
+            }
+            TopLevel::Domain(d) => {
+                let kind = match d.name.as_str() {
+                    "server" => DomainKind::Server,
+                    "client" => DomainKind::Client,
+                    _ => return,
+                };
+                for inner in &d.items {
+                    self.collect_type_domains_item(inner, Some(kind));
+                }
+            }
+            _ => {}
+        }
+    }
+
+    fn check_domain_enforcement(&mut self, program: &Program) {
+        if !self.has_domains {
+            return;
+        }
+
+        for item in &program.items {
+            self.check_item_domain_enforcement(item);
+        }
+    }
+
+    fn check_item_domain_enforcement(&mut self, item: &TopLevel) {
+        match item {
+            TopLevel::Function(f) => {
+                if !self.function_domains.contains_key(&f.name) {
+                    self.errors.push(CompileError::new(
+                        &format!(
+                            "function '{}' must be declared inside a domain block when domains are used in the program",
+                            f.name
+                        ),
+                        &self.filename,
+                        0,
+                        0,
+                    ));
+                }
+            }
+            TopLevel::Domain(d) => {
+                for inner in &d.items {
+                    self.check_item_domain_enforcement(inner);
+                }
+            }
+            _ => {}
+        }
     }
 
     fn collect_structs(&mut self, program: &Program) {
@@ -324,11 +401,27 @@ impl DomainAnalyzer {
                         0,
                     ));
                 }
+                // Check for domain-local types crossing boundaries
+                if let Type::Struct(name) = return_type.as_ref() {
+                    if let Some(type_domain) = self.type_domains.get(name) {
+                        if *type_domain != caller_domain {
+                            self.errors.push(CompileError::new(
+                                &format!(
+                                    "type '{}' is local to {} domain and cannot cross to {} domain",
+                                    name, type_domain, caller_domain
+                                ),
+                                &self.filename,
+                                0,
+                                0,
+                            ));
+                        }
+                    }
+                }
             }
         } else if caller_domain == DomainKind::Server && callee_domain == DomainKind::Client {
             self.errors.push(CompileError::new(
                 &format!(
-                    "server function '{}' cannot call client function '{}': server->client calls are not supported in this MVP",
+                    "server->client calls are not supported: server function '{}' cannot call client function '{}'. Use events/messages for server-to-client communication",
                     caller_name, callee_name
                 ),
                 &self.filename,
@@ -398,5 +491,13 @@ impl DomainAnalyzer {
 
     pub fn get_all_function_domains(&self) -> HashMap<String, DomainKind> {
         self.function_domains.clone()
+    }
+
+    pub fn get_struct_fields(&self) -> &HashMap<String, Vec<(String, Type)>> {
+        &self.struct_fields
+    }
+
+    pub fn has_domains(&self) -> bool {
+        self.has_domains
     }
 }

@@ -1,0 +1,12 @@
+domain server {
+    fn get_ids() {
+        return [10, 20, 30];
+    }
+}
+
+domain client {
+    fn main() {
+        let ids = get_ids();
+        print(ids);
+    }
+}

@@ -73,6 +73,8 @@ fn compile_and_run(source: &str, filename: &str) -> i32 {
     let mut lowerer = HIRLowerer::new(filename);
     let domain_map = domain_analyzer.get_all_function_domains();
     lowerer.set_domain_map(domain_map);
+    let struct_fields = domain_analyzer.get_struct_fields().clone();
+    lowerer.set_struct_fields(&struct_fields);
     let hir = lowerer.lower_program(&ast);
     if !lowerer.errors.is_empty() {
         for error in &lowerer.errors {

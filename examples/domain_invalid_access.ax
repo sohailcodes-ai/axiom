@@ -10,6 +10,8 @@ domain server {
     }
 }
 
-fn main() {
-    print("this should not compile");
+domain client {
+    fn main() {
+        print("this should not compile");
+    }
 }

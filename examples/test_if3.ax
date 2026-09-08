@@ -1,6 +1,6 @@
 fn main() {
-    let x = 10
+    let x: i64 = 10;
     if x < 20 {
-        print("yes")
+        print("yes");
     }
 }

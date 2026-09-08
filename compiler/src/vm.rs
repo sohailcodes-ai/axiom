@@ -1,5 +1,3 @@
-use crate::errors::CompileError;
-
 #[derive(Debug, Clone)]
 pub enum Value {
     Integer(i64),
@@ -7,6 +5,9 @@ pub enum Value {
     String(String),
     Bool(bool),
     Unit,
+    Array(Vec<Value>),
+    Struct(Vec<Value>),
+    Maybe(Option<Box<Value>>),
 }
 
 impl std::fmt::Display for Value {
@@ -17,6 +18,16 @@ impl std::fmt::Display for Value {
             Value::String(s) => write!(f, "{}", s),
             Value::Bool(b) => write!(f, "{}", b),
             Value::Unit => write!(f, "()"),
+            Value::Array(elements) => {
+                let items: Vec<String> = elements.iter().map(|e| e.to_string()).collect();
+                write!(f, "[{}]", items.join(", "))
+            }
+            Value::Struct(fields) => {
+                let items: Vec<String> = fields.iter().map(|e| e.to_string()).collect();
+                write!(f, "{{{}}}", items.join(", "))
+            }
+            Value::Maybe(Some(val)) => write!(f, "Some({})", val),
+            Value::Maybe(None) => write!(f, "None"),
         }
     }
 }
@@ -71,9 +82,14 @@ pub enum VMOpcode {
     JmpIfFalse,
     JmpIfTrue,
     CallFunc,
+    CrossDomainCall,
     Return,
     Print,
     Halt,
+    MakeStruct,
+    GetField,
+    MakeArray,
+    ArrayGet,
 }
 
 #[derive(Debug, Clone)]
@@ -95,6 +111,7 @@ struct StackFrame {
 pub struct VM {
     program: VMProgram,
     frames: Vec<StackFrame>,
+    cross_domain_stack: Vec<bool>,
     pub output: Vec<String>,
     pub errors: Vec<String>,
 }
@@ -104,6 +121,7 @@ impl VM {
         VM {
             program,
             frames: Vec::new(),
+            cross_domain_stack: Vec::new(),
             output: Vec::new(),
             errors: Vec::new(),
         }
@@ -313,17 +331,156 @@ impl VM {
                     return Err("call requires function name".to_string());
                 }
             }
+            VMOpcode::CrossDomainCall => {
+                let func_name = self.frames[frame_idx].stack.pop().unwrap_or(Value::Unit);
+                if let Value::String(name) = func_name {
+                    let func = self.program.functions.iter().find(|f| f.name == name).cloned();
+                    
+                    if let Some(func) = func {
+                        let arg_count = func.param_count;
+                        let mut args = Vec::new();
+                        for _ in 0..arg_count {
+                            args.push(self.frames[frame_idx].stack.pop().unwrap_or(Value::Unit));
+                        }
+                        args.reverse();
+                        
+                        // SERIALIZE arguments
+                        let mut serialized_args = Vec::new();
+                        for arg in &args {
+                            let bytes = Self::serialize_value(arg);
+                            serialized_args.push(bytes);
+                        }
+                        
+                        self.output.push(format!(
+                            "[BOUNDARY] {} args serialized ({} bytes total)",
+                            args.len(),
+                            serialized_args.iter().map(|b| b.len()).sum::<usize>()
+                        ));
+                        
+                        // DESERIALIZE arguments (simulating network transfer)
+                        let mut deserialized_args = Vec::new();
+                        for bytes in &serialized_args {
+                            let (val, _) = Self::deserialize_value(bytes)
+                                .map_err(|e| format!("deserialization error: {}", e))?;
+                            deserialized_args.push(val);
+                        }
+                        
+                        self.output.push(format!(
+                            "[BOUNDARY] {} args deserialized successfully",
+                            deserialized_args.len()
+                        ));
+                        
+                        // Mark this as a cross-domain boundary
+                        self.cross_domain_stack.push(true);
+                        
+                        // Execute target function with deserialized args
+                        let mut locals = vec![Value::Unit; func.locals_count];
+                        for (i, arg) in deserialized_args.into_iter().enumerate() {
+                            if i < locals.len() {
+                                locals[i] = arg;
+                            }
+                        }
+                        
+                        let func_idx = self.program.functions.iter().position(|f| f.name == name).unwrap();
+                        let new_frame = StackFrame {
+                            function_idx: func_idx,
+                            locals,
+                            ip: 0,
+                            stack: Vec::new(),
+                        };
+                        self.frames.push(new_frame);
+                    } else {
+                        return Err(format!("undefined function: {}", name));
+                    }
+                } else {
+                    return Err("cross-domain call requires function name".to_string());
+                }
+            }
             VMOpcode::Return => {
                 let value = self.frames[frame_idx].stack.pop().unwrap_or(Value::Unit);
                 self.frames.pop();
-                if let Some(frame) = self.frames.last_mut() {
-                    frame.stack.push(value);
+                
+                // Check if this is a cross-domain boundary return
+                if !self.cross_domain_stack.is_empty() && *self.cross_domain_stack.last().unwrap() {
+                    self.cross_domain_stack.pop();
+                    
+                    // SERIALIZE return value
+                    let serialized = Self::serialize_value(&value);
+                    self.output.push(format!(
+                        "[BOUNDARY] return value serialized ({} bytes)",
+                        serialized.len()
+                    ));
+                    
+                    // DESERIALIZE return value (simulating network transfer)
+                    let (deserialized, _) = Self::deserialize_value(&serialized)
+                        .map_err(|e| format!("return deserialization error: {}", e))?;
+                    
+                    self.output.push(format!(
+                        "[BOUNDARY] return value deserialized: {}",
+                        deserialized
+                    ));
+                    
+                    // Push deserialized result to caller
+                    if let Some(frame) = self.frames.last_mut() {
+                        frame.stack.push(deserialized);
+                    }
+                } else {
+                    // Normal local return
+                    if let Some(frame) = self.frames.last_mut() {
+                        frame.stack.push(value);
+                    }
                 }
             }
             VMOpcode::Print => {
                 let value = self.frames[frame_idx].stack.pop().unwrap_or(Value::Unit);
                 self.output.push(value.to_string());
                 self.frames[frame_idx].stack.push(Value::Unit);
+            }
+            VMOpcode::MakeStruct => {
+                let field_count = instr.operand.unwrap() as usize;
+                let mut fields = Vec::new();
+                for _ in 0..field_count {
+                    fields.push(self.frames[frame_idx].stack.pop().unwrap_or(Value::Unit));
+                }
+                fields.reverse();
+                self.frames[frame_idx].stack.push(Value::Struct(fields));
+            }
+            VMOpcode::GetField => {
+                let index = instr.operand.unwrap() as usize;
+                let object = self.frames[frame_idx].stack.pop().unwrap_or(Value::Unit);
+                match object {
+                    Value::Struct(fields) => {
+                        if index < fields.len() {
+                            self.frames[frame_idx].stack.push(fields[index].clone());
+                        } else {
+                            return Err(format!("struct field index {} out of bounds", index));
+                        }
+                    }
+                    _ => return Err("GetField requires a struct value".to_string()),
+                }
+            }
+            VMOpcode::MakeArray => {
+                let count = instr.operand.unwrap() as usize;
+                let mut elements = Vec::new();
+                for _ in 0..count {
+                    elements.push(self.frames[frame_idx].stack.pop().unwrap_or(Value::Unit));
+                }
+                elements.reverse();
+                self.frames[frame_idx].stack.push(Value::Array(elements));
+            }
+            VMOpcode::ArrayGet => {
+                let index = self.frames[frame_idx].stack.pop().unwrap_or(Value::Unit);
+                let array = self.frames[frame_idx].stack.pop().unwrap_or(Value::Unit);
+                match (array, index) {
+                    (Value::Array(elements), Value::Integer(i)) => {
+                        if i >= 0 && (i as usize) < elements.len() {
+                            self.frames[frame_idx].stack.push(elements[i as usize].clone());
+                        } else {
+                            return Err(format!("array index {} out of bounds", i));
+                        }
+                    }
+                    _ => return Err("ArrayGet requires an array and an integer index".to_string()),
+                }
             }
         }
         
@@ -407,6 +564,13 @@ impl VM {
             (Value::String(a), Value::String(b)) => a == b,
             (Value::Bool(a), Value::Bool(b)) => a == b,
             (Value::Unit, Value::Unit) => true,
+            (Value::Array(a), Value::Array(b)) => a.len() == b.len() && a.iter().zip(b.iter()).all(|(x, y)| Self::values_equal(x, y)),
+            (Value::Struct(a), Value::Struct(b)) => a.len() == b.len() && a.iter().zip(b.iter()).all(|(x, y)| Self::values_equal(x, y)),
+            (Value::Maybe(a), Value::Maybe(b)) => match (a, b) {
+                (None, None) => true,
+                (Some(x), Some(y)) => Self::values_equal(x, y),
+                _ => false,
+            },
             _ => false,
         }
     }
@@ -472,6 +636,141 @@ impl VM {
             Value::Float(0.0) => true,
             Value::String(s) => s.is_empty(),
             _ => false,
+        }
+    }
+
+    // AXIOM binary serialization format (tag-length-value)
+    // Tag bytes: 0=Int, 1=Float, 2=Bool, 3=String, 4=Unit, 5=Array, 6=MaybeSome, 7=MaybeNone, 8=Struct
+    
+    fn serialize_value(value: &Value) -> Vec<u8> {
+        let mut buf = Vec::new();
+        Self::serialize_into(value, &mut buf);
+        buf
+    }
+    
+    fn serialize_into(value: &Value, buf: &mut Vec<u8>) {
+        match value {
+            Value::Integer(n) => {
+                buf.push(0);
+                buf.extend_from_slice(&n.to_le_bytes());
+            }
+            Value::Float(n) => {
+                buf.push(1);
+                buf.extend_from_slice(&n.to_le_bytes());
+            }
+            Value::Bool(b) => {
+                buf.push(2);
+                buf.push(if *b { 1 } else { 0 });
+            }
+            Value::String(s) => {
+                buf.push(3);
+                let bytes = s.as_bytes();
+                buf.extend_from_slice(&(bytes.len() as u32).to_le_bytes());
+                buf.extend_from_slice(bytes);
+            }
+            Value::Unit => {
+                buf.push(4);
+            }
+            Value::Array(elements) => {
+                buf.push(5);
+                buf.extend_from_slice(&(elements.len() as u32).to_le_bytes());
+                for elem in elements {
+                    Self::serialize_into(elem, buf);
+                }
+            }
+            Value::Maybe(Some(val)) => {
+                buf.push(6);
+                Self::serialize_into(val, buf);
+            }
+            Value::Maybe(None) => {
+                buf.push(7);
+            }
+            Value::Struct(fields) => {
+                buf.push(8);
+                buf.extend_from_slice(&(fields.len() as u32).to_le_bytes());
+                for field in fields {
+                    Self::serialize_into(field, buf);
+                }
+            }
+        }
+    }
+    
+    fn deserialize_value(data: &[u8]) -> Result<(Value, usize), String> {
+        if data.is_empty() {
+            return Err("empty data".to_string());
+        }
+        
+        let tag = data[0];
+        let mut pos = 1;
+        
+        match tag {
+            0 => {
+                if data.len() < 9 {
+                    return Err("truncated Int".to_string());
+                }
+                let n = i64::from_le_bytes(data[1..9].try_into().unwrap());
+                Ok((Value::Integer(n), 9))
+            }
+            1 => {
+                if data.len() < 9 {
+                    return Err("truncated Float".to_string());
+                }
+                let n = f64::from_le_bytes(data[1..9].try_into().unwrap());
+                Ok((Value::Float(n), 9))
+            }
+            2 => {
+                if data.len() < 2 {
+                    return Err("truncated Bool".to_string());
+                }
+                Ok((Value::Bool(data[1] != 0), 2))
+            }
+            3 => {
+                if data.len() < 5 {
+                    return Err("truncated String length".to_string());
+                }
+                let len = u32::from_le_bytes(data[1..5].try_into().unwrap()) as usize;
+                if data.len() < 5 + len {
+                    return Err("truncated String data".to_string());
+                }
+                let s = String::from_utf8(data[5..5 + len].to_vec())
+                    .map_err(|e| format!("invalid UTF-8: {}", e))?;
+                Ok((Value::String(s), 5 + len))
+            }
+            4 => Ok((Value::Unit, 1)),
+            5 => {
+                if data.len() < 5 {
+                    return Err("truncated Array length".to_string());
+                }
+                let count = u32::from_le_bytes(data[1..5].try_into().unwrap()) as usize;
+                pos = 5;
+                let mut elements = Vec::new();
+                for _ in 0..count {
+                    let (val, consumed) = Self::deserialize_value(&data[pos..])?;
+                    elements.push(val);
+                    pos += consumed;
+                }
+                Ok((Value::Array(elements), pos))
+            }
+            6 => {
+                let (val, consumed) = Self::deserialize_value(&data[1..])?;
+                Ok((Value::Maybe(Some(Box::new(val))), 1 + consumed))
+            }
+            7 => Ok((Value::Maybe(None), 1)),
+            8 => {
+                if data.len() < 5 {
+                    return Err("truncated Struct length".to_string());
+                }
+                let count = u32::from_le_bytes(data[1..5].try_into().unwrap()) as usize;
+                pos = 5;
+                let mut fields = Vec::new();
+                for _ in 0..count {
+                    let (val, consumed) = Self::deserialize_value(&data[pos..])?;
+                    fields.push(val);
+                    pos += consumed;
+                }
+                Ok((Value::Struct(fields), pos))
+            }
+            _ => Err(format!("unknown serialization tag: {}", tag)),
         }
     }
 }

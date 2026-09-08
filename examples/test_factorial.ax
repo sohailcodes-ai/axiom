@@ -1,21 +1,21 @@
 fn factorial(n: i64) -> i64 {
     if n <= 1 {
-        1
+        return 1;
     } else {
-        n * factorial(n - 1)
+        return n * factorial(n - 1);
     }
 }
 
 fn main() {
-    let result = factorial(5)
-    print(result)
+    let result: i64 = factorial(5);
+    print(result);
 
-    let x = 42
-    print(x)
+    let x: i64 = 42;
+    print(x);
 
     if x > 10 {
-        print("big")
+        print("big");
     } else {
-        print("small")
+        print("small");
     }
 }

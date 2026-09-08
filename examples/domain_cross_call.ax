@@ -13,9 +13,9 @@ domain client {
     fn show_user(id: Int) -> User {
         return get_user(id);
     }
-}
 
-fn main() {
-    let u: User = show_user(1);
-    print("cross-domain call succeeded");
+    fn main() {
+        let u: User = show_user(1);
+        print("cross-domain call succeeded");
+    }
 }

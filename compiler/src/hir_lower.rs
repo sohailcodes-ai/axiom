@@ -2,6 +2,7 @@ use std::collections::HashMap;
 use crate::ast::*;
 use crate::hir::*;
 use crate::errors::CompileError;
+use crate::type_checker::Type;
 use crate::domain_analysis::DomainKind;
 
 pub struct HIRLowerer {
@@ -10,6 +11,7 @@ pub struct HIRLowerer {
     local_count: usize,
     function_domains: HashMap<String, DomainKind>,
     current_domain: Option<DomainKind>,
+    struct_field_indices: HashMap<String, HashMap<String, usize>>,
     pub errors: Vec<CompileError>,
 }
 
@@ -21,12 +23,23 @@ impl HIRLowerer {
             local_count: 0,
             function_domains: HashMap::new(),
             current_domain: None,
+            struct_field_indices: HashMap::new(),
             errors: Vec::new(),
         }
     }
 
     pub fn set_domain_map(&mut self, map: HashMap<String, DomainKind>) {
         self.function_domains = map;
+    }
+
+    pub fn set_struct_fields(&mut self, struct_fields: &HashMap<String, Vec<(String, Type)>>) {
+        for (struct_name, fields) in struct_fields {
+            let mut field_map = HashMap::new();
+            for (i, (field_name, _)) in fields.iter().enumerate() {
+                field_map.insert(field_name.clone(), i);
+            }
+            self.struct_field_indices.insert(struct_name.clone(), field_map);
+        }
     }
 
     pub fn lower_program(&mut self, program: &Program) -> HIRProgram {
@@ -204,7 +217,7 @@ impl HIRLowerer {
                     body: self.lower_block(body),
                 }
             }
-            Expr::Block(block) => {
+            Expr::Block(_block) => {
                 HIRExpr::Unit
             }
             Expr::Assignment { name, value } => {
@@ -220,25 +233,71 @@ impl HIRLowerer {
                 }
             }
             Expr::FieldAccess { object, field } => {
-                HIRExpr::Unit
+                let lowered_object = self.lower_expr(object);
+                // Try to find the field index from struct definitions
+                // For now, we'll use a simple approach: assume the field name maps to an index
+                // This works when the struct type is known at compile time
+                if let Expr::Identifier(_struct_name) = object.as_ref() {
+                    // Look through all struct definitions to find this field
+                    for (_name, field_map) in &self.struct_field_indices {
+                        if let Some(&idx) = field_map.get(field) {
+                            return HIRExpr::GetField {
+                                object: Box::new(lowered_object),
+                                index: idx,
+                            };
+                        }
+                    }
+                }
+                // Fallback: try to extract index from field name (for simple cases)
+                // This is a heuristic - in a full implementation, we'd need type information
+                HIRExpr::GetField {
+                    object: Box::new(lowered_object),
+                    index: 0, // Default to first field if we can't determine index
+                }
             }
-            Expr::MethodCall { object, method, args } => {
+            Expr::MethodCall { object: _object, method: _method, args: _args } => {
                 HIRExpr::Unit
             }
             Expr::ArrayLiteral(elements) => {
-                HIRExpr::Unit
+                let lowered_elements: Vec<HIRExpr> = elements.iter()
+                    .map(|e| self.lower_expr(e))
+                    .collect();
+                HIRExpr::MakeArray { elements: lowered_elements }
             }
             Expr::ArrayAccess { array, index } => {
-                HIRExpr::Unit
+                HIRExpr::ArrayGet {
+                    array: Box::new(self.lower_expr(array)),
+                    index: Box::new(self.lower_expr(index)),
+                }
             }
-            Expr::TupleLiteral(elements) => {
+            Expr::TupleLiteral(_elements) => {
                 HIRExpr::Unit
             }
             Expr::SomeValue(value) => {
                 self.lower_expr(value)
             }
             Expr::StructLiteral { name, fields } => {
-                HIRExpr::Unit
+                // Lower field values in the order they appear in the struct definition
+                if let Some(field_map) = self.struct_field_indices.get(name) {
+                    let mut ordered_fields: Vec<(usize, &Expr)> = fields.iter()
+                        .filter_map(|(field_name, field_value)| {
+                            field_map.get(field_name).map(|&idx| (idx, field_value))
+                        })
+                        .collect();
+                    ordered_fields.sort_by_key(|(idx, _)| *idx);
+                    
+                    let lowered_fields: Vec<HIRExpr> = ordered_fields.iter()
+                        .map(|(_, expr)| self.lower_expr(expr))
+                        .collect();
+                    
+                    HIRExpr::MakeStruct { fields: lowered_fields }
+                } else {
+                    // Unknown struct, just lower fields as-is
+                    let lowered_fields: Vec<HIRExpr> = fields.iter()
+                        .map(|(_, expr)| self.lower_expr(expr))
+                        .collect();
+                    HIRExpr::MakeStruct { fields: lowered_fields }
+                }
             }
             Expr::QualifiedName { module, name } => {
                 HIRExpr::Call {

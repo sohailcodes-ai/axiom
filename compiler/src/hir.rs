@@ -37,6 +37,20 @@ pub enum HIRExpr {
     },
     Print(Box<HIRExpr>),
     Return(Box<HIRExpr>),
+    MakeStruct {
+        fields: Vec<HIRExpr>,
+    },
+    GetField {
+        object: Box<HIRExpr>,
+        index: usize,
+    },
+    MakeArray {
+        elements: Vec<HIRExpr>,
+    },
+    ArrayGet {
+        array: Box<HIRExpr>,
+        index: Box<HIRExpr>,
+    },
 }
 
 #[derive(Debug, Clone)]

@@ -1,5 +1,5 @@
 fn main() {
-    let x = 10
-    let y = 20
-    print("done")
+    let x: i64 = 10;
+    let y: i64 = 20;
+    print("done");
 }

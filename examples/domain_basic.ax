@@ -4,7 +4,9 @@ domain server {
     }
 }
 
-fn main() {
-    let n: Int = get_count();
-    print(n);
+domain client {
+    fn main() {
+        let n: Int = get_count();
+        print(n);
+    }
 }

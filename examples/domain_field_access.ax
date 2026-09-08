@@ -1,0 +1,17 @@
+struct User {
+    id: Int,
+    name: String
+}
+
+domain server {
+    fn get_user(id: Int) -> User {
+        return User { id: id, name: "Sohail" };
+    }
+}
+
+domain client {
+    fn main() {
+        let user = get_user(42);
+        print(user.name);
+    }
+}
